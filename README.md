@@ -8,6 +8,8 @@ Vico Keyboard 是一个基于 ESP32-C3 的五键 BLE 小键盘原型，用于 vi
 - BLE HID Keyboard：通过蓝牙向电脑发送方向键和 Enter
 - SSD1306 128×32 I2C OLED：显示 Vico / Claude Code 状态
 - USB CDC Serial：电脑可以通过串口发送状态到 OLED
+- Claude Code Hooks：将 Claude Code 生命周期事件映射为 OLED 状态
+- Python companion：监听 `.vico/status.json` 并转发到 ESP32-C3 串口
 - Claude Code logo 启动画面与状态界面小图标
 - `THINKING` 状态下，Claude 小图标外框有流动线条动画
 
@@ -51,6 +53,8 @@ build_flags =
 
 ## Build
 
+安装 PlatformIO 后，在仓库根目录运行：
+
 ```powershell
 pio run
 ```
@@ -68,6 +72,8 @@ pio run -t upload --upload-port COM7
 ```powershell
 pio device list
 ```
+
+注意：烧录时要先关闭 `companion.py`、`pio device monitor` 等占用串口的程序。
 
 ## BLE pairing
 
@@ -144,19 +150,125 @@ THINKING
 Manual test
 ```
 
+## Companion
+
+本仓库包含一个电脑端 companion：
+
+```text
+companion/companion.py
+```
+
+它会监听：
+
+```text
+.vico/status.json
+```
+
+当状态文件变化时，companion 会通过串口向 ESP32-C3 发送：
+
+```text
+STATE <state>
+TEXT <message>
+```
+
+安装依赖：
+
+```powershell
+pip install pyserial
+```
+
+查看串口：
+
+```powershell
+python companion\companion.py --list
+```
+
+启动持续监听：
+
+```powershell
+python companion\companion.py --port COM7
+```
+
+只发送一次当前状态：
+
+```powershell
+python companion\companion.py --port COM7 --once
+```
+
 ## Claude Code integration
 
-本固件不直接读取 Claude Code。推荐链路是：
+本固件不直接读取 Claude Code。完整链路是：
 
 ```text
 Claude Code Hook
-  -> status.json
-  -> desktop companion
+  -> .vico/status.json
+  -> companion/companion.py
   -> USB CDC Serial
   -> ESP32-C3 OLED
 ```
 
-也就是说，Claude Code 或桌面端 companion 只需要按上面的串口协议发送状态即可。
+本仓库已包含 Claude Code 配置示例：
+
+```text
+.claude/
+├── settings.json
+└── hooks/
+    └── vico-status.py
+```
+
+### 1. 让 Claude Code 读取 settings
+
+把本仓库作为 Claude Code 项目打开：
+
+```powershell
+cd path\to\ESP32C3-MiniKeyboard
+claude
+```
+
+在 Claude Code 里运行：
+
+```text
+/hooks
+```
+
+确认能看到 `SessionStart`、`UserPromptSubmit`、`Notification`、`Stop` 等 hooks。
+
+### 2. 手动测试 hook
+
+在仓库根目录运行：
+
+```powershell
+python .claude\hooks\vico-status.py THINKING "Manual test"
+```
+
+它会生成或更新：
+
+```text
+.vico/status.json
+```
+
+然后运行：
+
+```powershell
+python companion\companion.py --port COM7 --once
+```
+
+OLED 应显示：
+
+```text
+THINKING
+Manual test
+```
+
+### 3. 自动显示 Claude Code 状态
+
+保持 companion 运行：
+
+```powershell
+python companion\companion.py --port COM7
+```
+
+然后在 Claude Code 中提交 prompt。OLED 会根据 hooks 自动切换状态。
 
 示例映射：
 
@@ -173,11 +285,20 @@ Claude Code Hook
 
 ```text
 .
+├── .claude/
+│   ├── settings.json          # Claude Code hooks 配置
+│   └── hooks/
+│       └── vico-status.py     # 将 hook 事件写入 .vico/status.json
+├── companion/
+│   ├── companion.py           # 监听状态文件并转发到串口
+│   └── README.md
 ├── include/
 │   └── font.h      # OLED 图标声明与尺寸定义
+├── lib/
 ├── src/
 │   ├── font.c      # 蓝牙图标、Claude logo 位图
 │   └── main.cpp    # 键盘、OLED、串口协议主逻辑
+├── test/
 ├── platformio.ini
 └── README.md
 ```
